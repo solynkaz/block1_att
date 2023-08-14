@@ -2,138 +2,78 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.stats import ttest_ind, chi2_contingency
 
-from scipy.stats import ttest_ind, chi2_contingency, mannwhitneyu
-import io
+st.set_option('deprecation.showPyplotGlobalUse', False)
 
 
-def run_numeric(column, data, color):
-    data[column] = pd.to_numeric(data[column], errors='coerce')
-    data[column] = data[column].dropna()
+def load_data(file):
+    try:
+        data = pd.read_csv(file)
+        return data
+    except Exception as e:
+        st.error(f"Ошибка при загрузке файла: {e}")
+        return None
 
+
+def visualize_distribution(data, column):
+    st.subheader(f"Распределение переменной '{column}'")
     plt.figure(figsize=(10, 6))
-    sns.histplot(data[column], color=color, kde=True)
-    plt.title(f"Гистограмма с KDE для колонки: {column}")
-    plt.xlabel(column)
-    plt.ylabel("Частота")
-    st.pyplot(plt)
 
-
-def run_categorial(column, data, color):
-    category_counts = data[column].value_counts()
-
-    # Построение пай-чарта
-    plt.figure(figsize=(8, 8))
-    plt.pie(category_counts, labels=category_counts.index, autopct="%1.1f%%", startangle=140)
-    plt.title(f"Pie-chart: {column}")
-    st.pyplot(plt)
-
-
-def run(column, data, color):
-    numeric = pd.to_numeric(data[column], errors='coerce')
-    if (numeric.count() == 0 or data[column].nunique() < 10):
-        st.write(f"Колонка: {column} CATEGORIAL")
-        run_categorial(column, data, color)
+    if data[column].dtype == "object":
+        data[column].value_counts().head(12).plot(kind="pie", autopct="%1.1f%%")
+        st.pyplot()
     else:
-        st.write(f"Колонка: {column} NUMERIC")
-        run_numeric(column, data, color)
+        sns.histplot(data=data, x=column, kde=True)
+        st.pyplot()
 
 
-def show_info(data):
-    buffer = io.StringIO()
-    data.info(buf=buffer)
-    info_string = buffer.getvalue()
 
-    # Вывод информации о датафрейме как строки
-    st.write("Информация о датафрейме:")
-    st.text(info_string)
-    # Вывод первых нескольких строк
-    st.write("Первые строки файла:")
+def hypothesis_test(data, column1, column2):
+    st.subheader("Проверка гипотезы")
 
-    st.write(data.head())
+    if data[column1].dtype != data[column2].dtype:
+        st.error("Выбранные переменные имеют разные типы данных")
+    else:
+        if data[column1].dtype == "object":
+            contingency_table = pd.crosstab(data[column1], data[column2])
+            chi2, p, _, _ = chi2_contingency(contingency_table)
+            st.write(f"Значение статистики Хи-квадрат: {chi2:.2f}")
+            st.write(f"p-value: {p:.4f}")
+        else:
+            group1 = data[data[column2] == data[column2].unique()[0]][column1]
+            group2 = data[data[column2] == data[column2].unique()[1]][column1]
+            t_statistic, p_value = ttest_ind(group1, group2)
+            st.write(f"Значение t-статистики: {t_statistic:.2f}")
+            st.write(f"p-value: {p_value:.4f}")
 
 
 def main():
-    # Заголовок приложения
-    st.title("Анализ распределения данных")
+    st.title("Анализ данных")
 
-    # Загрузка файла
-    uploaded_file = st.file_uploader("Выберите файл (CSV)", type=["csv"])
-
-    # Обработка файла
+    uploaded_file = st.file_uploader("Загрузите CSV файл", type=["csv"])
     if uploaded_file is not None:
-        # Чтение данных из CSV файла
-        data = pd.read_csv(uploaded_file)
-        if st.button("Показать информацию о датафрейме"):
-            show_info(data)
+        data = load_data(uploaded_file)
 
-        st.markdown("<h2>Выберите столбцы для анализа распределения:</h2>", unsafe_allow_html=True)
-        selected_columns = st.multiselect("Выберите столбцы для анализа распределения:", data.columns,
-                                          label_visibility='hidden')
-        for column in selected_columns:
-            run(column, data, 'red')
+        if data is not None:
+            columns = data.columns.tolist()
+            column1 = st.selectbox("Выберите первую переменную", columns)
+            column2 = st.selectbox("Выберите вторую переменную", columns)
 
-        st.markdown("<h2 align=\"center\">Статистический анализ</h2>", unsafe_allow_html=True)
-        hypotheses = ['T Test', 'Mann-whitney U-test', 'Chi-square']
+            visualize_distribution(data, column1)
+            visualize_distribution(data, column2)
 
-        hypothesis = st.selectbox("Выберите гипотезу", hypotheses)
+            test_options = ["t-тест", "Хи-квадрат тест"]
+            selected_test = st.selectbox("Выберите проверочный алгоритм", test_options)
 
-        # Выбор гипотезы
-        if hypothesis == 'T Test':
-            st.markdown(f"<h3 align=\"center\">{hypothesis} гипотеза</h3>", unsafe_allow_html=True)
-            t_test(data)
-
-        if hypothesis == 'Mann-whitney U-test':
-            st.markdown(f"<h3 align=\"center\">{hypothesis} гипотеза</h3>", unsafe_allow_html=True)
-            u_test(data)
-
-        if hypothesis == 'Chi-square':
-            st.markdown(f"<h3 align=\"center\">{hypothesis} гипотеза</h3>", unsafe_allow_html=True)
-            chi_square(data)
-
-
-def t_test(data):
-    compare = st.selectbox("Выберите 1 столбец для анализа:", data.columns)
-
-    fileds_in_compare = st.multiselect("Выберите значение 2 по которым будете сравнивать\n:" +
-                                       f"(здесь перечислины все уникальные значения {compare})",
-                                       data[compare].unique())
-
-    if len(fileds_in_compare) == 2:
-        criteries = st.multiselect("Выберите критерий сравнения", data.columns.drop(compare))
-        for critery in criteries:
-            res = ttest_ind(data[data[compare] == fileds_in_compare[0]][critery],
-                            data[data[compare] == fileds_in_compare[1]][critery],
-                            equal_var=False)
-            st.write(f'p-value для {critery}: {res.pvalue / 2:.4f}')
-
-
-def u_test(data):
-    compare = st.selectbox("Выберите 1 столбец для анализа:", data.columns)
-
-    fileds_in_compare = st.multiselect("Выберите значение 2 по которым будете сравнивать\n:" +
-                                       f"(здесь перечислины все уникальные значения {compare})",
-                                       data[compare].unique())
-
-    if len(fileds_in_compare) == 2:
-        criteries = st.multiselect("Выберите критерий сравнения", data.columns.drop(compare))
-        for critery in criteries:
-            res = mannwhitneyu(data[data[compare] == fileds_in_compare[0]][critery],
-                               data[data[compare] == fileds_in_compare[1]][critery])
-            st.write(f'p-value для {critery}: {res.pvalue / 2:.4f}')
-
-
-def chi_square(data):
-    columns = st.selectbox("Выберите columns столбец для анализа:", data.columns)
-    values = st.selectbox("Выберите values столбец для анализа:", data.columns)
-    cross_tab = pd.crosstab(data[columns], data[values], margins=True)
-    cross_tab = cross_tab.drop(columns=["All"], index=["All"])
-    st.write("cross_tab")
-    st.write(cross_tab)
-
-    chisq, pvalue = chi2_contingency(cross_tab)
-    st.write(f'Observed chi2: {chisq:.4f}')
-    st.write(f'p-value: {pvalue:.4f}')
+            if st.button("Выполнить проверку"):
+                if data[column1].dtype == data[column2].dtype:
+                    if selected_test == "t-тест":
+                        hypothesis_test(data, column1, column2)
+                    elif selected_test == "Хи-квадрат тест":
+                        hypothesis_test(data, column1, column2)
+                else:
+                    st.warning('У переменных разный тип данных')
 
 
 main()
